@@ -242,6 +242,9 @@ def main():
     accounts = api.get_account_list()
     logger.info(f"보유 계좌: {accounts}")
 
+    # 계좌 비밀번호 자동 입력 등록
+    api.dynamicCall("KOA_Functions(QString, QString)", ["ShowAccountWindow", ""])
+
     bot = TradingBot(config, api)
     bot.start()
 

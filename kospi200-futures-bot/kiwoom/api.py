@@ -20,8 +20,8 @@ TR_DELAY = 0.2
 class KiwoomAPI(QAxWidget):
     """OpenAPI+ COM 객체를 감싸는 클래스."""
 
-    REAL_SERVER = "OpenAPI.KHOpenAPI.1"
-    DEMO_SERVER = "OpenAPI.KHOpenAPI.1"  # 모의투자도 동일 COM, 서버만 다름
+    REAL_SERVER = "KHOPENAPI.KHOpenAPICtrl.1"
+    DEMO_SERVER = "KHOPENAPI.KHOpenAPICtrl.1"  # 모의투자도 동일 COM, 서버만 다름
 
     def __init__(self, config: dict):
         super().__init__()
@@ -129,8 +129,31 @@ class KiwoomAPI(QAxWidget):
     ) -> int:
         return self.dynamicCall(
             "SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)",
-            rq_name, screen_no, account, order_type, code, qty, price, hoga_gb, org_order_no
+            [rq_name, screen_no, account, order_type, code, qty, price, hoga_gb, org_order_no]
         )
+
+    def send_order_fo(
+        self,
+        rq_name: str,
+        screen_no: str,
+        account: str,
+        code: str,
+        ord_kind: int,     # 1=신규매매, 2=정정, 3=취소
+        slby_tp: str,      # "1"=매도, "2"=매수
+        ord_tp: str,       # "1"=지정가, "3"=시장가
+        qty: int,
+        price: str = "",
+        org_ord_no: str = "",
+    ) -> int:
+        """코스피200 선물/옵션 전용 주문 함수."""
+        return self.dynamicCall(
+            "SendOrderFO(QString, QString, QString, QString, int, QString, QString, int, QString, QString)",
+            [rq_name, screen_no, account, code, ord_kind, slby_tp, ord_tp, qty, price, org_ord_no]
+        )
+
+    def get_chejan_data(self, fid: int) -> str:
+        """체결/잔고 데이터 조회."""
+        return self.dynamicCall("GetChejanData(int)", fid).strip()
 
     def _on_chejan(self, gubun: str, item_cnt: int, fid_list: str):
         """체결/잔고 이벤트 → RealtimeHandler에서 재정의."""

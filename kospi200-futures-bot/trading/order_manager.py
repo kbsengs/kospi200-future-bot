@@ -41,37 +41,36 @@ class OrderManager:
     # 진입
     # ------------------------------------------------------------------ #
     def enter_long(self, qty: int, stop_price: float) -> bool:
-        """시장가 매수 진입."""
+        """시장가 매수 진입 (선물 전용 SendOrderFO)."""
         logger.info(f"[주문] 롱 진입 qty={qty} stop={stop_price}")
-        ret = self.api.send_order(
+        ret = self.api.send_order_fo(
             rq_name="신규매수",
             screen_no=SCREEN_ORDER,
             account=self.account,
-            order_type=1,
             code=self.code,
+            ord_kind=1,     # 신규매매
+            slby_tp="2",    # 매수
+            ord_tp="3",     # 시장가
             qty=qty,
-            price=0,
-            hoga_gb=HOGA_MARKET,
         )
         if ret == 0:
-            # 체결가는 체결 이벤트에서 갱신되어야 하나, 일단 현재가로 임시 저장
             self.position = Position("long", entry_price=0.0, qty=qty, stop_price=stop_price)
             return True
         logger.error(f"롱 진입 주문 실패: ret={ret}")
         return False
 
     def enter_short(self, qty: int, stop_price: float) -> bool:
-        """시장가 매도 진입."""
+        """시장가 매도 진입 (선물 전용 SendOrderFO)."""
         logger.info(f"[주문] 숏 진입 qty={qty} stop={stop_price}")
-        ret = self.api.send_order(
+        ret = self.api.send_order_fo(
             rq_name="신규매도",
             screen_no=SCREEN_ORDER,
             account=self.account,
-            order_type=2,
             code=self.code,
+            ord_kind=1,     # 신규매매
+            slby_tp="1",    # 매도
+            ord_tp="3",     # 시장가
             qty=qty,
-            price=0,
-            hoga_gb=HOGA_MARKET,
         )
         if ret == 0:
             self.position = Position("short", entry_price=0.0, qty=qty, stop_price=stop_price)
@@ -90,16 +89,16 @@ class OrderManager:
         pos = self.position
         logger.info(f"[주문] 청산 direction={pos.direction} qty={pos.qty} reason={reason}")
 
-        order_type = 2 if pos.direction == "long" else 1  # 롱이면 매도, 숏이면 매수
-        ret = self.api.send_order(
+        slby_tp = "1" if pos.direction == "long" else "2"  # 롱청산=매도, 숏청산=매수
+        ret = self.api.send_order_fo(
             rq_name="청산",
             screen_no=SCREEN_ORDER,
             account=self.account,
-            order_type=order_type,
             code=self.code,
+            ord_kind=1,     # 신규매매
+            slby_tp=slby_tp,
+            ord_tp="3",     # 시장가
             qty=pos.qty,
-            price=0,
-            hoga_gb=HOGA_MARKET,
         )
         if ret == 0:
             self.position = None
