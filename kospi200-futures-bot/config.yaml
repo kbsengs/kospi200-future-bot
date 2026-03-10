@@ -1,0 +1,33 @@
+kiwoom:
+  account: "XXXXXXXXX"       # 계좌번호 (실거래 or 모의투자)
+  future_code: "101N9000"    # 코스피200 근월물 종목코드
+  server: "demo"             # "demo" = 모의투자 / "real" = 실계좌
+
+strategy:
+  squeeze:
+    bb_length: 20
+    bb_mult: 2.0
+    kc_length: 20
+    kc_mult: 2.0
+    min_squeeze_bars: 3      # Squeeze ON 최소 연속 봉 수 (압축 강도 조건)
+    min_momentum: 0.2        # 진입 최소 |momentum| (약한 신호 제외)
+  ma:
+    fast: 5
+    slow: 20
+  timeframe: "1"             # 분봉 단위 (1분봉)
+
+risk:
+  max_contracts: 1           # 최대 보유 계약수
+  stop_atr_mult: 0.8         # 손절 = 진입가 ± ATR × 배수
+  max_daily_loss: 500000     # 일일 최대 손실 한도 (원)
+
+trading_hours:
+  start: "08:45"             # 코스피200 선물 개장
+  end: "15:45"               # 코스피200 선물 폐장
+  no_entry_after: "15:30"    # 신규 진입 금지 시각 (폐장 15분 전)
+
+logging:
+  level: "INFO"
+  file: "logs/trade.log"
+  rotation: "1 day"
+  retention: "30 days"

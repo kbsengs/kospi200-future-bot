@@ -1,0 +1,26 @@
+# 로그
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# 환경
+.env
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# 임시 파일
+*.tmp
+sweep_optimized.py
