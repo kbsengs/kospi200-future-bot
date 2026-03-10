@@ -72,6 +72,14 @@ def keltner_channel(
 
 
 # ------------------------------------------------------------------ #
+# EMA (Exponential Moving Average)
+# ------------------------------------------------------------------ #
+def ema(close: pd.Series, length: int) -> pd.Series:
+    """지수 이동 평균."""
+    return close.ewm(span=length, adjust=False).mean()
+
+
+# ------------------------------------------------------------------ #
 # Moving Average
 # ------------------------------------------------------------------ #
 def moving_average(close: pd.Series, fast: int = 5, slow: int = 20) -> pd.DataFrame:

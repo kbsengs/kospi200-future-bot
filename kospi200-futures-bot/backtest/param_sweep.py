@@ -15,6 +15,7 @@ import pandas as pd
 from loguru import logger
 
 from backtest.engine import BacktestEngine
+from backtest.compare import load_data
 
 logger.disable("__main__")
 logger.disable("backtest.engine")
@@ -30,6 +31,8 @@ class SweepResult:
     kc_mult: float
     ma_fast: int
     ma_slow: int
+    min_squeeze_bars: int
+    min_momentum: float
     stop_atr_mult: float
     trades: int
     win_rate: float
@@ -39,45 +42,79 @@ class SweepResult:
 
 
 def run_sweep(df: pd.DataFrame) -> list[SweepResult]:
-    param_grid = {
-        "bb_length":    [15, 20],
-        "bb_mult":      [2.0, 2.5],
-        "kc_length":    [20],
-        "kc_mult":      [1.5, 2.0],
-        "ma_fast":      [5, 8],
-        "ma_slow":      [20, 30],
-        "stop_atr_mult": [1.5, 2.0, 2.5],
+    """
+    최적화된 스윕: BB/KC 조합별로 지표를 한 번만 계산하고
+    진입 파라미터(min_squeeze_bars, min_momentum, stop_atr_mult)만 루프.
+    """
+    from strategy.indicators import (
+        bollinger_bands, squeeze_momentum, moving_average, atr as calc_atr,
+    )
+    from data.gap_adjust import make_indicator_df
+
+    # 갭 보정 (지표용)
+    if "time" in df.columns:
+        tmp = df.copy()
+        tmp["_date"] = tmp["time"].astype(str).str[:8]
+        ind_df = make_indicator_df(tmp, date_col="_date")
+    else:
+        ind_df = df
+
+    # 지표 파라미터: BB/KC는 기본값 고정, MA만 변경 (linreg 재계산 최소화)
+    indicator_grid = {
+        "bb_length": [20],
+        "bb_mult":   [2.0],
+        "kc_length": [20],
+        "kc_mult":   [1.5],
+        "ma_fast":   [5, 8],
+        "ma_slow":   [20, 30],
+    }
+    # 진입 파라미터: 핵심 최적화 대상
+    entry_grid = {
+        "min_squeeze_bars": [3, 5, 8, 10],
+        "min_momentum":     [0.05, 0.1, 0.2, 0.3],
+        "stop_atr_mult":    [1.0, 1.5, 2.0, 2.5],
     }
 
-    keys = list(param_grid.keys())
-    values = list(param_grid.values())
-    combos = list(itertools.product(*values))
-    print(f"총 {len(combos)}개 파라미터 조합 테스트 중...\n")
+    ind_combos   = list(itertools.product(*indicator_grid.values()))
+    entry_combos = list(itertools.product(*entry_grid.values()))
+    total = len(ind_combos) * len(entry_combos)
+    print(f"총 {total}개 파라미터 조합 테스트 중...\n")
 
     results = []
-    for i, combo in enumerate(combos, 1):
-        params = dict(zip(keys, combo))
-        engine = BacktestEngine(**params)
-        try:
-            bt = engine.run(df)
-        except Exception as e:
-            continue
+    done = 0
 
-        if bt.total_trades == 0:
-            continue
+    for ind_combo in ind_combos:
+        ind_params = dict(zip(indicator_grid.keys(), ind_combo))
 
-        results.append(SweepResult(
-            **params,
-            trades=bt.total_trades,
-            win_rate=bt.win_rate,
-            total_pnl=bt.total_pnl,
-            profit_factor=bt.profit_factor,
-            mdd=bt.max_drawdown,
-        ))
+        # 지표 사전 계산 (이 조합에서 한 번만)
+        engine_base = BacktestEngine(strategy="squeeze", **ind_params)
 
-        if i % 10 == 0:
-            print(f"  {i}/{len(combos)} 완료...")
+        for entry_combo in entry_combos:
+            entry_params = dict(zip(entry_grid.keys(), entry_combo))
+            engine = BacktestEngine(strategy="squeeze", **ind_params, **entry_params)
+            try:
+                bt = engine.run(df)
+            except Exception:
+                continue
+            finally:
+                done += 1
 
+            if bt.total_trades == 0:
+                continue
+
+            results.append(SweepResult(
+                **ind_params, **entry_params,
+                trades=bt.total_trades,
+                win_rate=bt.win_rate,
+                total_pnl=bt.total_pnl,
+                profit_factor=bt.profit_factor,
+                mdd=bt.max_drawdown,
+            ))
+
+        if done % 100 == 0:
+            print(f"  {done}/{total} 완료...")
+
+    print(f"  {done}/{total} 완료.")
     return results
 
 
@@ -87,10 +124,7 @@ def main():
     parser.add_argument("--top", type=int, default=10, help="상위 N개 출력")
     args = parser.parse_args()
 
-    df = pd.read_csv(args.csv)
-    for col in ["open", "high", "low", "close"]:
-        df[col] = df[col].astype(float).abs()
-    df["volume"] = df["volume"].astype(int)
+    df = load_data(args.csv)
 
     results = run_sweep(df)
 
@@ -104,23 +138,24 @@ def main():
     print(f"\n{'='*80}")
     print(f"  파라미터 스윕 결과 (상위 {args.top}개, 총 손익 기준)")
     print(f"{'='*80}")
-    print(f"{'BB':>4} {'BBm':>4} {'KC':>4} {'KCm':>4} {'MAf':>4} {'MAs':>4} {'SATRm':>5} | "
+    print(f"{'BB':>4} {'BBm':>4} {'KC':>4} {'KCm':>4} {'MAf':>4} {'MAs':>4} {'SqB':>4} {'Mom':>5} {'Satr':>5} | "
           f"{'거래':>4} {'승률':>6} {'손익':>12} {'PF':>5} {'MDD':>12}")
-    print("-" * 80)
+    print("-" * 90)
     for r in results[:args.top]:
-        pf_str = f"{r.profit_factor:.2f}" if r.profit_factor < 999 else " inf"
+        pf_str = f"{r.profit_factor:.2f}" if r.profit_factor < 999 else "  inf"
         print(
             f"{r.bb_length:>4} {r.bb_mult:>4} {r.kc_length:>4} {r.kc_mult:>4} "
-            f"{r.ma_fast:>4} {r.ma_slow:>4} {r.stop_atr_mult:>5} | "
+            f"{r.ma_fast:>4} {r.ma_slow:>4} {r.min_squeeze_bars:>4} {r.min_momentum:>5} {r.stop_atr_mult:>5} | "
             f"{r.trades:>4} {r.win_rate:>5.1f}% {r.total_pnl:>12,.0f} {pf_str:>5} {r.mdd:>12,.0f}"
         )
-    print(f"{'='*80}\n")
+    print(f"{'='*90}\n")
 
     best = results[0]
     print("추천 파라미터 (최고 손익):")
     print(f"  bb_length={best.bb_length}, bb_mult={best.bb_mult}")
     print(f"  kc_length={best.kc_length}, kc_mult={best.kc_mult}")
     print(f"  ma_fast={best.ma_fast}, ma_slow={best.ma_slow}")
+    print(f"  min_squeeze_bars={best.min_squeeze_bars}, min_momentum={best.min_momentum}")
     print(f"  stop_atr_mult={best.stop_atr_mult}")
 
 

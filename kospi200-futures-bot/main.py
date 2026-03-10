@@ -24,6 +24,7 @@ from kiwoom.realtime import RealtimeHandler
 from data.history import HistoryManager
 from data.gap_adjust import make_indicator_df
 from strategy.signal import generate_signal
+from strategy.signal_brando import generate_signal_brando
 from trading.order_manager import OrderManager
 from trading.risk_manager import RiskManager
 
@@ -76,14 +77,21 @@ class TradingBot:
         self.no_entry_after   = dtime(*map(int, hours_cfg["no_entry_after"].split(":")))
 
         strat = config["strategy"]
+        self.strategy_type   = strat.get("type", "squeeze")
         self.bb_length       = strat["squeeze"]["bb_length"]
         self.bb_mult         = strat["squeeze"]["bb_mult"]
         self.kc_length       = strat["squeeze"]["kc_length"]
         self.kc_mult         = strat["squeeze"]["kc_mult"]
-        self.ma_fast         = strat["ma"]["fast"]
-        self.ma_slow         = strat["ma"]["slow"]
-        self.min_squeeze_bars = strat["squeeze"].get("min_squeeze_bars", 5)
-        self.min_momentum     = strat["squeeze"].get("min_momentum", 0.3)
+        # squeeze 추가 파라미터 (최적화 결과 기본값)
+        sq_cfg = strat["squeeze"]
+        self.ma_fast         = sq_cfg.get("ma_fast", 8)
+        self.ma_slow         = sq_cfg.get("ma_slow", 30)
+        self.min_squeeze_bars = sq_cfg.get("min_squeeze_bars", 3)
+        self.min_momentum    = sq_cfg.get("min_momentum", 0.05)
+        # brando 파라미터
+        brando_cfg = strat.get("brando", {})
+        self.ema_length      = brando_cfg.get("ema_length", 100)
+        self.mom_lookback    = brando_cfg.get("mom_lookback", 5)
 
         self.history  = HistoryManager(api, self.code, strat["timeframe"])
         self.order_mgr = OrderManager(api, config)
@@ -146,18 +154,30 @@ class TradingBot:
 
         # 신호 생성 (갭 보정된 df로 지표 계산)
         ind_df = make_indicator_df(self._df, date_col="date")
-        signal = generate_signal(
-            df=ind_df,
-            current_position=self.order_mgr.direction,
-            bb_length=self.bb_length,
-            bb_mult=self.bb_mult,
-            kc_length=self.kc_length,
-            kc_mult=self.kc_mult,
-            ma_fast=self.ma_fast,
-            ma_slow=self.ma_slow,
-            min_squeeze_bars=self.min_squeeze_bars,
-            min_momentum=self.min_momentum,
-        )
+        if self.strategy_type == "brando":
+            signal = generate_signal_brando(
+                df=ind_df,
+                current_position=self.order_mgr.direction,
+                ema_length=self.ema_length,
+                bb_length=self.bb_length,
+                bb_mult=self.bb_mult,
+                kc_length=self.kc_length,
+                kc_mult=self.kc_mult,
+                mom_lookback=self.mom_lookback,
+            )
+        else:
+            signal = generate_signal(
+                df=ind_df,
+                current_position=self.order_mgr.direction,
+                bb_length=self.bb_length,
+                bb_mult=self.bb_mult,
+                kc_length=self.kc_length,
+                kc_mult=self.kc_mult,
+                ma_fast=self.ma_fast,
+                ma_slow=self.ma_slow,
+                min_squeeze_bars=self.min_squeeze_bars,
+                min_momentum=self.min_momentum,
+            )
 
         logger.debug(f"신호: {signal} | 포지션: {self.order_mgr.direction}")
 
