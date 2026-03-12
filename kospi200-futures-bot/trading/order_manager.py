@@ -6,19 +6,18 @@
   1 = 신규매수, 2 = 신규매도, 3 = 매수취소, 4 = 매도취소, 5 = 매수정정, 6 = 매도정정
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from loguru import logger
+from PyQt5.QtCore import QTimer
 
 from kiwoom.api import KiwoomAPI
 
 
-SCREEN_ORDER = "6000"
-
-# 호가 구분
-HOGA_MARKET = "03"   # 시장가
-HOGA_LIMIT  = "00"   # 지정가
+SCREEN_ORDER   = "6000"
+EXIT_MAX_RETRY = 5        # 청산 재시도 최대 횟수
+EXIT_RETRY_MS  = 500      # 재시도 간격 (ms)
 
 
 @dataclass
@@ -27,7 +26,6 @@ class Position:
     entry_price: float
     qty: int
     stop_price: float = 0.0
-    order_no: str = ""
 
 
 class OrderManager:
@@ -36,6 +34,8 @@ class OrderManager:
         self.account = config["kiwoom"]["account"]
         self.code    = config["kiwoom"]["future_code"]
         self.position: Optional[Position] = None
+        self._exiting = False          # 청산 주문 진행 중 플래그 (중복 방지)
+        self._exit_retry = 0           # 현재 재시도 횟수
 
     # ------------------------------------------------------------------ #
     # 진입
@@ -82,29 +82,60 @@ class OrderManager:
     # 청산
     # ------------------------------------------------------------------ #
     def exit_position(self, reason: str = "") -> bool:
-        """현재 포지션 전량 시장가 청산."""
+        """현재 포지션 전량 시장가 청산.
+        - 중복 호출 방지: _exiting 플래그
+        - 전송 실패 시 EXIT_MAX_RETRY 회까지 자동 재시도 (QTimer)
+        """
         if self.position is None:
             return True
+        if self._exiting:
+            logger.warning(f"[주문] 청산 중 — 중복 요청 무시 (reason={reason})")
+            return True
+
+        self._exiting = True
+        self._exit_retry = 0
+        self._do_exit(reason)
+        return True
+
+    def _do_exit(self, reason: str):
+        if self.position is None:
+            self._exiting = False
+            return
 
         pos = self.position
-        logger.info(f"[주문] 청산 direction={pos.direction} qty={pos.qty} reason={reason}")
-
-        slby_tp = "1" if pos.direction == "long" else "2"  # 롱청산=매도, 숏청산=매수
+        slby_tp = "1" if pos.direction == "long" else "2"
+        logger.info(
+            f"[주문] 청산 시도 #{self._exit_retry + 1} "
+            f"direction={pos.direction} qty={pos.qty} reason={reason}"
+        )
         ret = self.api.send_order_fo(
             rq_name="청산",
             screen_no=SCREEN_ORDER,
             account=self.account,
             code=self.code,
-            ord_kind=1,     # 신규매매
+            ord_kind=1,
             slby_tp=slby_tp,
-            ord_tp="3",     # 시장가
+            ord_tp="3",     # 시장가 — 반드시 체결
             qty=pos.qty,
         )
         if ret == 0:
+            logger.info("[주문] 청산 접수 완료")
             self.position = None
-            return True
-        logger.error(f"청산 주문 실패: ret={ret}")
-        return False
+            self._exiting = False
+        else:
+            self._exit_retry += 1
+            if self._exit_retry < EXIT_MAX_RETRY:
+                logger.warning(
+                    f"[주문] 청산 실패(ret={ret}) — "
+                    f"{EXIT_RETRY_MS}ms 후 재시도 ({self._exit_retry}/{EXIT_MAX_RETRY})"
+                )
+                QTimer.singleShot(EXIT_RETRY_MS, lambda: self._do_exit(reason))
+            else:
+                logger.critical(
+                    f"[주문] 청산 {EXIT_MAX_RETRY}회 실패 — 수동 처리 필요! "
+                    f"direction={pos.direction} qty={pos.qty}"
+                )
+                self._exiting = False
 
     # ------------------------------------------------------------------ #
     # 체결가 업데이트 (RealtimeHandler 에서 호출)

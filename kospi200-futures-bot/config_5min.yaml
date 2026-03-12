@@ -4,30 +4,30 @@ kiwoom:
   server: "demo"             # "demo" = 모의투자 / "real" = 실계좌
 
 strategy:
-  type: "brando"             # "squeeze" | "brando"
+  type: "brando"             # 5분봉 버전도 브랜도 전략 사용
   squeeze:
     bb_length: 20
     bb_mult: 2.0
     kc_length: 20
     kc_mult: 1.5
   brando:
-    ema_length: 100          # 추세 확인용 EMA (브랜도: 장기 추세)
-    mom_lookback: 5          # 모멘텀 돌파 기준 탐색 봉 수
+    ema_length: 100          # 5분봉 스윕 최적값 (EMA 100)
+    mom_lookback: 10         # 5분봉 스윕 최적값 (look=10, 1분봉과 역전)
     adx_threshold: 20.0      # 박스권 필터: ADX < 이 값이면 신규 진입 차단 (0 = 비활성화)
-  timeframe: "1"             # 분봉 단위 (1분봉)
+  timeframe: "5"             # 5분봉
 
 risk:
   max_contracts: 1           # 최대 보유 계약수
-  stop_atr_mult: 3.0         # 손절 = 진입가 ± ATR × 배수 (브랜도 최적: 3.0)
+  stop_atr_mult: 3.0         # 손절 = 진입가 ± ATR × 배수 (5분봉 최적: 3.0)
   max_daily_loss: 10000000   # 일일 최대 손실 한도 (원) — 테스트용
 
 trading_hours:
   start: "08:45"             # 코스피200 선물 개장
   end: "15:45"               # 코스피200 선물 폐장
-  no_entry_after: "15:30"    # 신규 진입 금지 시각 (폐장 15분 전)
+  no_entry_after: "15:30"    # 신규 진입 금지 시각
 
 logging:
   level: "DEBUG"
-  file: "logs/trade.log"
+  file: "logs/trade_5min.log"   # 1분봉과 별도 로그 파일
   rotation: "1 day"
   retention: "30 days"

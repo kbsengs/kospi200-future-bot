@@ -16,7 +16,7 @@ from typing import Optional
 
 import pandas as pd
 
-from .indicators import ema, squeeze_momentum
+from .indicators import ema, squeeze_momentum, adx
 
 
 def generate_signal_brando(
@@ -28,15 +28,17 @@ def generate_signal_brando(
     kc_length: int = 20,
     kc_mult: float = 1.5,
     mom_lookback: int = 10,
+    adx_threshold: float = 20.0,
 ) -> Optional[str]:
     """
     브랜도 매매법 기반 신호를 생성한다.
 
     Args:
-        df            : 갭 보정 OHLCV DataFrame. 최소 ema_length + 5 행 필요.
+        df               : 갭 보정 OHLCV DataFrame. 최소 ema_length + 5 행 필요.
         current_position : 현재 포지션 ('long' / 'short' / None)
-        ema_length    : 추세 확인용 EMA 기간 (기본 200)
-        mom_lookback  : 모멘텀 돌파 기준 탐색 봉 수 (기본 10)
+        ema_length       : 추세 확인용 EMA 기간 (기본 200)
+        mom_lookback     : 모멘텀 돌파 기준 탐색 봉 수 (기본 10)
+        adx_threshold    : 박스권 필터. ADX 이 값 미만이면 신규 진입 차단 (기본 20.0)
 
     Returns:
         'long' / 'short' / 'exit' / None
@@ -45,8 +47,9 @@ def generate_signal_brando(
     if len(df) < min_len:
         return None
 
-    sq  = squeeze_momentum(df, bb_length, bb_mult, kc_length, kc_mult)
+    sq     = squeeze_momentum(df, bb_length, bb_mult, kc_length, kc_mult)
     ema200 = ema(df["close"], ema_length)
+    adx_series = adx(df["high"], df["low"], df["close"])
 
     curr     = sq.iloc[-1]
     prev     = sq.iloc[-2]
@@ -73,6 +76,11 @@ def generate_signal_brando(
     if current_position is None:
         # Squeeze OFF 상태여야 함 (흰색 원)
         if curr["squeeze_on"]:
+            return None
+
+        # ADX 박스권 필터: ADX < threshold → 추세 없음 → 진입 차단
+        curr_adx = float(adx_series.iloc[-1])
+        if pd.isna(curr_adx) or curr_adx < adx_threshold:
             return None
 
         # EMA 200 추세

@@ -1,9 +1,12 @@
 """
-코스피200 선물 자동매매 봇 - 진입점.
+코스피200 선물 자동매매 봇 — 5분봉 버전 진입점.
 
 실행:
-    python main.py                    # 실거래/모의투자 모드
-    python -m backtest.engine --csv sample.csv  # 백테스트 모드
+    python main_5min.py
+
+설정 파일: config_5min.yaml
+로그 파일: logs/trade_5min.log
+봉 단위:   5분봉 (QTimer 기반 5분 경계 타이머)
 
 장 운영시간: 08:45 ~ 15:45 (코스피200 선물 기준)
 신규 진입 금지: 15:30 이후
@@ -20,10 +23,9 @@ from loguru import logger
 from PyQt5.QtWidgets import QApplication
 
 from kiwoom.api import KiwoomAPI
-from kiwoom.realtime import RealtimeHandler
+from kiwoom.realtime_5min import RealtimeHandler5Min
 from data.history import HistoryManager
 from data.gap_adjust import make_indicator_df
-from strategy.signal import generate_signal
 from strategy.signal_brando import generate_signal_brando
 from trading.order_manager import OrderManager
 from trading.risk_manager import RiskManager
@@ -32,7 +34,7 @@ from trading.risk_manager import RiskManager
 # ------------------------------------------------------------------ #
 # 설정 로딩
 # ------------------------------------------------------------------ #
-def load_config(path: str = "config.yaml") -> dict:
+def load_config(path: str = "config_5min.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -49,7 +51,7 @@ def setup_logger(config: dict):
         level=log_cfg.get("level", "INFO"),
     )
     logger.add(
-        log_cfg.get("file", "logs/trade.log"),
+        log_cfg.get("file", "logs/trade_5min.log"),
         rotation=log_cfg.get("rotation", "1 day"),
         retention=log_cfg.get("retention", "30 days"),
         encoding="utf-8",
@@ -58,13 +60,19 @@ def setup_logger(config: dict):
 
 
 # ------------------------------------------------------------------ #
-# 메인 봇 클래스
+# 메인 봇 클래스 (5분봉)
 # ------------------------------------------------------------------ #
 POINT_VALUE = 250_000   # 코스피200 선물 1포인트 = 250,000원
 COMMISSION  = 5_000    # 편도 수수료 (원)
 
+# 5분봉 초기 로딩 봉 수:
+#   지표 계산에 필요한 최소 봉 수 = max(ema_length, bb_length, kc_length) = 100
+#   여유 확보: 100 × 2배 = 200봉
+#   5분봉 1거래일 = 약 81봉(405분/5), 200봉 ≈ 2.5거래일분
+INITIAL_BARS = 200
 
-class TradingBot:
+
+class TradingBot5Min:
     def __init__(self, config: dict, api: KiwoomAPI):
         self.config  = config
         self.api     = api
@@ -72,32 +80,28 @@ class TradingBot:
         self.account = config["kiwoom"]["account"]
 
         hours_cfg = config["trading_hours"]
-        self.market_open      = dtime(*map(int, hours_cfg["start"].split(":")))
-        self.market_close     = dtime(*map(int, hours_cfg["end"].split(":")))
-        self.no_entry_after   = dtime(*map(int, hours_cfg["no_entry_after"].split(":")))
+        self.market_open    = dtime(*map(int, hours_cfg["start"].split(":")))
+        self.market_close   = dtime(*map(int, hours_cfg["end"].split(":")))
+        self.no_entry_after = dtime(*map(int, hours_cfg["no_entry_after"].split(":")))
 
         strat = config["strategy"]
-        self.strategy_type   = strat.get("type", "squeeze")
-        self.bb_length       = strat["squeeze"]["bb_length"]
-        self.bb_mult         = strat["squeeze"]["bb_mult"]
-        self.kc_length       = strat["squeeze"]["kc_length"]
-        self.kc_mult         = strat["squeeze"]["kc_mult"]
-        # squeeze 추가 파라미터 (최적화 결과 기본값)
-        sq_cfg = strat["squeeze"]
-        self.ma_fast         = sq_cfg.get("ma_fast", 8)
-        self.ma_slow         = sq_cfg.get("ma_slow", 30)
-        self.min_squeeze_bars = sq_cfg.get("min_squeeze_bars", 3)
-        self.min_momentum    = sq_cfg.get("min_momentum", 0.05)
-        # brando 파라미터
-        brando_cfg = strat.get("brando", {})
-        self.ema_length      = brando_cfg.get("ema_length", 100)
-        self.mom_lookback    = brando_cfg.get("mom_lookback", 5)
-        self.adx_threshold   = brando_cfg.get("adx_threshold", 20.0)
+        self.strategy_type = strat.get("type", "brando")
 
-        self.history  = HistoryManager(api, self.code, strat["timeframe"])
+        sq_cfg = strat["squeeze"]
+        self.bb_length = sq_cfg["bb_length"]
+        self.bb_mult   = sq_cfg["bb_mult"]
+        self.kc_length = sq_cfg["kc_length"]
+        self.kc_mult   = sq_cfg["kc_mult"]
+
+        brando_cfg = strat.get("brando", {})
+        self.ema_length    = brando_cfg.get("ema_length", 100)
+        self.mom_lookback  = brando_cfg.get("mom_lookback", 10)
+        self.adx_threshold = brando_cfg.get("adx_threshold", 20.0)
+
+        self.history   = HistoryManager(api, self.code, strat["timeframe"])
         self.order_mgr = OrderManager(api, config)
         self.risk_mgr  = RiskManager(config)
-        self.realtime: Optional[RealtimeHandler] = None
+        self.realtime: Optional[RealtimeHandler5Min] = None
 
         self._df: pd.DataFrame = pd.DataFrame()
 
@@ -105,24 +109,26 @@ class TradingBot:
     # 시작
     # ------------------------------------------------------------------ #
     def start(self):
-        logger.info("봇 시작: 과거 데이터 로딩")
-        # 임의 시각 시작 지원: 오늘 완성 봉 + 전날 봉 전체
-        # KOSPI200 선물 1일 최대 ~405봉 × 2일분 = 810 → 여유 있게 900
-        self._df = self.history.load_initial(count=900)
+        logger.info("5분봉 봇 시작: 과거 데이터 로딩")
+        self._df = self.history.load_initial(count=INITIAL_BARS)
 
         self.risk_mgr.reset_daily()
 
-        logger.info("실시간 수신 등록")
-        self.realtime = RealtimeHandler(
+        logger.info("실시간 수신 등록 (5분봉)")
+        self.realtime = RealtimeHandler5Min(
             api=self.api,
             code=self.code,
             on_bar_close=self._on_bar_close,
             on_fill=self.order_mgr.update_fill_price,
         )
-        logger.info(f"자동매매 대기 중 ({self.code}) | 장: {self.market_open}~{self.market_close}")
+        logger.info(
+            f"5분봉 자동매매 대기 중 ({self.code}) | "
+            f"장: {self.market_open}~{self.market_close} | "
+            f"EMA={self.ema_length} look={self.mom_lookback}"
+        )
 
     # ------------------------------------------------------------------ #
-    # 분봉 완성 콜백
+    # 5분봉 완성 콜백
     # ------------------------------------------------------------------ #
     def _on_bar_close(self, bar: dict):
         now = datetime.now().time()
@@ -135,15 +141,15 @@ class TradingBot:
         self.history.append_bar(bar)
         self._df = self.history.to_dataframe()
 
-        # 손절 틱 단위 체크 (봉 종가 기준)
+        # 손절 체크 (봉 종가 기준)
         current_price = bar["close"]
         if self.order_mgr.has_position:
             if self.order_mgr.check_stop_loss(current_price):
-                self._record_pnl(current_price)  # 봉 종가 기준 (시장가 주문 근사값)
+                self._record_pnl(current_price)
                 self.order_mgr.exit_position(reason="stop_loss")
                 return
 
-        # 일일 한도 초과 또는 장 마감 직전
+        # 일일 한도 초과 → 거래 중단
         if self.risk_mgr.is_trading_halted:
             return
 
@@ -165,31 +171,17 @@ class TradingBot:
 
         # 신호 생성 (갭 보정된 df로 지표 계산)
         ind_df = make_indicator_df(self._df, date_col="date")
-        if self.strategy_type == "brando":
-            signal = generate_signal_brando(
-                df=ind_df,
-                current_position=self.order_mgr.direction,
-                ema_length=self.ema_length,
-                bb_length=self.bb_length,
-                bb_mult=self.bb_mult,
-                kc_length=self.kc_length,
-                kc_mult=self.kc_mult,
-                mom_lookback=self.mom_lookback,
-                adx_threshold=self.adx_threshold,
-            )
-        else:
-            signal = generate_signal(
-                df=ind_df,
-                current_position=self.order_mgr.direction,
-                bb_length=self.bb_length,
-                bb_mult=self.bb_mult,
-                kc_length=self.kc_length,
-                kc_mult=self.kc_mult,
-                ma_fast=self.ma_fast,
-                ma_slow=self.ma_slow,
-                min_squeeze_bars=self.min_squeeze_bars,
-                min_momentum=self.min_momentum,
-            )
+        signal = generate_signal_brando(
+            df=ind_df,
+            current_position=self.order_mgr.direction,
+            ema_length=self.ema_length,
+            bb_length=self.bb_length,
+            bb_mult=self.bb_mult,
+            kc_length=self.kc_length,
+            kc_mult=self.kc_mult,
+            mom_lookback=self.mom_lookback,
+            adx_threshold=self.adx_threshold,
+        )
 
         logger.debug(f"신호: {signal} | 포지션: {self.order_mgr.direction}")
 
@@ -198,15 +190,11 @@ class TradingBot:
             self.order_mgr.exit_position(reason="signal")
 
         elif signal in ("long", "short") and not self.order_mgr.has_position:
-            # 신규 진입 시간 제한 (15:30 이후 진입 금지)
             if now >= self.no_entry_after:
                 logger.info(f"신규 진입 금지 시각 이후 ({self.no_entry_after}) → 신호 무시")
                 return
 
-            qty = self.risk_mgr.get_order_qty(
-                balance=0,           # 실거래 시 잔고 조회 필요
-                current_price=current_price,
-            )
+            qty  = self.risk_mgr.get_order_qty(balance=0, current_price=current_price)
             stop = self.risk_mgr.calc_stop_price(self._df, signal, current_price)
 
             if signal == "long":
@@ -224,7 +212,7 @@ class TradingBot:
             raw_pnl = (exit_price - pos.entry_price) * POINT_VALUE * qty
         else:
             raw_pnl = (pos.entry_price - exit_price) * POINT_VALUE * qty
-        pnl = raw_pnl - COMMISSION * 2 * qty   # 왕복 수수료
+        pnl = raw_pnl - COMMISSION * 2 * qty
         self.risk_mgr.record_trade_pnl(pnl)
 
     def stop(self):
@@ -240,7 +228,7 @@ class TradingBot:
 # 진입점
 # ------------------------------------------------------------------ #
 def main():
-    config = load_config("config.yaml")
+    config = load_config("config_5min.yaml")
     setup_logger(config)
 
     app = QApplication(sys.argv)
@@ -257,7 +245,7 @@ def main():
     # 계좌 비밀번호 자동 입력 등록
     api.dynamicCall("KOA_Functions(QString, QString)", ["ShowAccountWindow", ""])
 
-    bot = TradingBot(config, api)
+    bot = TradingBot5Min(config, api)
     bot.start()
 
     try:

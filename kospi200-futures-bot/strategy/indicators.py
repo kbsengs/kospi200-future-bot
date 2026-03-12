@@ -116,6 +116,48 @@ def linreg(series: pd.Series, length: int) -> pd.Series:
 
 
 # ------------------------------------------------------------------ #
+# ADX (Average Directional Index) — Wilder 방식
+# ------------------------------------------------------------------ #
+def adx(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    length: int = 14,
+) -> pd.Series:
+    """
+    Wilder 방식 ADX.
+      ADX > 25 : 강한 추세
+      ADX > 20 : 추세 존재 (박스권 필터 기준값)
+      ADX < 20 : 박스권 / 횡보
+
+    Returns:
+        adx Series (0 ~ 100)
+    """
+    alpha = 1.0 / length   # Wilder smoothing factor
+
+    up   = high.diff()
+    down = -low.diff()
+
+    plus_dm  = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+
+    tr = true_range(high, low, close)
+
+    # Wilder Smoothed (누적 합산 방식 → ewm alpha로 근사)
+    tr_s    = pd.Series(tr.values,       index=close.index, dtype=float).ewm(alpha=alpha, adjust=False).mean()
+    pdm_s   = pd.Series(plus_dm,         index=close.index, dtype=float).ewm(alpha=alpha, adjust=False).mean()
+    mdm_s   = pd.Series(minus_dm,        index=close.index, dtype=float).ewm(alpha=alpha, adjust=False).mean()
+
+    pdi = 100 * pdm_s / tr_s.replace(0, np.nan)
+    mdi = 100 * mdm_s / tr_s.replace(0, np.nan)
+
+    dx  = 100 * (pdi - mdi).abs() / (pdi + mdi).replace(0, np.nan)
+    adx_series = dx.ewm(alpha=alpha, adjust=False).mean()
+
+    return adx_series
+
+
+# ------------------------------------------------------------------ #
 # Squeeze Momentum (LazyBear 방식)
 # ------------------------------------------------------------------ #
 def squeeze_momentum(

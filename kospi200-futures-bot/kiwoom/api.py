@@ -31,6 +31,7 @@ class KiwoomAPI(QAxWidget):
         self._login_event = QEventLoop()
         self._tr_event = QEventLoop()
         self._tr_data: dict = {}
+        self._pending_on_data: Optional[Callable] = None
 
         # 이벤트 연결
         self.OnEventConnect.connect(self._on_login)
@@ -79,8 +80,15 @@ class KiwoomAPI(QAxWidget):
     def set_input_value(self, key: str, value: str):
         self.dynamicCall("SetInputValue(QString, QString)", key, value)
 
-    def comm_rq_data(self, rq_name: str, tr_code: str, prev_next: int, screen: str):
-        """TR 요청 후 응답까지 블로킹."""
+    def comm_rq_data(self, rq_name: str, tr_code: str, prev_next: int, screen: str,
+                     on_data: Optional[Callable] = None):
+        """TR 요청 후 응답까지 블로킹.
+
+        on_data(api): GetRepeatCnt/GetCommData를 호출해야 하는 경우 이 콜백에서 처리.
+        키움 GetRepeatCnt/GetCommData는 OnReceiveTrData 내부에서만 유효하므로
+        on_data는 콜백 내부(이벤트 루프 종료 전)에서 호출된다.
+        """
+        self._pending_on_data = on_data
         ret = self.dynamicCall(
             "CommRqData(QString, QString, int, QString)",
             rq_name, tr_code, prev_next, screen
@@ -89,16 +97,24 @@ class KiwoomAPI(QAxWidget):
             self._tr_event.exec_()
         else:
             logger.error(f"TR 요청 실패: {tr_code} ret={ret}")
+            self._pending_on_data = None
         time.sleep(TR_DELAY)
         return self._tr_data
 
     def _on_tr_data(self, screen_no, rq_name, tr_code, record_name, prev_next, *args):
+        logger.debug(f"[OnReceiveTrData] tr_code={tr_code!r} record_name={record_name!r} prev_next={prev_next!r}")
         self._tr_data = {
             "screen_no": screen_no,
             "rq_name": rq_name,
             "tr_code": tr_code,
             "prev_next": prev_next,
         }
+        if self._pending_on_data:
+            try:
+                self._pending_on_data(self)
+            except Exception as e:
+                logger.error(f"on_data 콜백 오류: {e}")
+            self._pending_on_data = None
         self._tr_event.exit()
 
     def get_comm_data(self, tr_code: str, record_name: str, index: int, item: str) -> str:
