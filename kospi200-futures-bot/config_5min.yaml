@@ -1,6 +1,6 @@
 kiwoom:
   account: "7033535231"      # 계좌번호 (모의투자)
-  future_code: "A0163000"    # 코스피200 근월물 종목코드
+  future_code: "A0166000"    # 코스피200 근월물 종목코드 (6월물)
   server: "demo"             # "demo" = 모의투자 / "real" = 실계좌
 
 strategy:
