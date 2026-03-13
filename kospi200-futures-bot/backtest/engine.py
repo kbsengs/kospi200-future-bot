@@ -18,7 +18,7 @@ import pandas as pd
 import numpy as np
 from loguru import logger
 
-from strategy.indicators import atr, bollinger_bands, ema, moving_average, squeeze_momentum
+from strategy.indicators import atr, adx as calc_adx, bollinger_bands, ema, moving_average, squeeze_momentum
 
 
 @dataclass
@@ -128,6 +128,7 @@ class BacktestEngine:
         # brando 전략 파라미터
         ema_length: int = 200,
         mom_lookback: int = 10,
+        adx_threshold: float = 0.0,   # 0 = 비활성화
         # 공통
         stop_atr_mult: float = 2.0,
         atr_length: int = 14,
@@ -145,6 +146,7 @@ class BacktestEngine:
         self.min_momentum     = min_momentum
         self.ema_length     = ema_length
         self.mom_lookback   = mom_lookback
+        self.adx_threshold  = adx_threshold
         self.stop_atr_mult  = stop_atr_mult
         self.atr_length     = atr_length
         self.max_contracts  = max_contracts
@@ -202,6 +204,7 @@ class BacktestEngine:
         bb_lower_vals    = bb["bb_lower"].values
         atr_vals         = _atr.values
         ema200_vals      = calc_ema(ind_df["close"], self.ema_length).values
+        adx_vals         = calc_adx(ind_df["high"], ind_df["low"], ind_df["close"]).values
 
         if self.strategy == "squeeze":
             ma   = moving_average(ind_df["close"], self.ma_fast, self.ma_slow)
@@ -284,7 +287,7 @@ class BacktestEngine:
             else:
                 signal = self._signal_brando(
                     i, squeeze_on_vals, momentum_vals, mom_inc_vals,
-                    ema200_vals, cur_close, current_trade,
+                    ema200_vals, adx_vals, cur_close, current_trade,
                 )
 
             entry_price = open_vals[i]
@@ -362,7 +365,7 @@ class BacktestEngine:
 
     def _signal_brando(
         self, i, squeeze_on, momentum, mom_increasing,
-        ema200, cur_close,
+        ema200, adx_vals, cur_close,
         current_trade: Optional[Trade],
     ) -> Optional[str]:
         """브랜도 전략 신호."""
@@ -387,6 +390,12 @@ class BacktestEngine:
             # Squeeze OFF 상태여야 진입 가능
             if squeeze_on[i]:
                 return None
+
+            # ADX 박스권 필터
+            if self.adx_threshold > 0:
+                curr_adx = adx_vals[i]
+                if math.isnan(curr_adx) or curr_adx < self.adx_threshold:
+                    return None
 
             trend_up = cur_close > ema200[i]
             trend_dn = cur_close < ema200[i]

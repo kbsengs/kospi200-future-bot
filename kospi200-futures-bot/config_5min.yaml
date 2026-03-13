@@ -13,7 +13,7 @@ strategy:
   brando:
     ema_length: 100          # 5분봉 스윕 최적값 (EMA 100)
     mom_lookback: 10         # 5분봉 스윕 최적값 (look=10, 1분봉과 역전)
-    adx_threshold: 20.0      # 박스권 필터: ADX < 이 값이면 신규 진입 차단 (0 = 비활성화)
+    adx_threshold: 0.0       # 박스권 필터: ADX < 이 값이면 신규 진입 차단 (0 = 비활성화) ← 분석 결과 비활성화 권장
   timeframe: "5"             # 5분봉
 
 risk:

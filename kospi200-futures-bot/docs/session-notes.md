@@ -2,6 +2,62 @@
 
 ---
 
+## 2026-03-13 세션 노트
+
+### 전략 파라미터 현황
+
+**1분봉 (config.yaml)**
+- strategy: brando
+- ema_length: 100, mom_lookback: 5, stop_atr_mult: 3.0
+- adx_threshold: 0.0 (비활성화 — 분석 결과 ADX<20 구간이 더 수익성 높음)
+- bb: 20/2.0, kc: 20/1.5, timeframe: "1"
+
+**5분봉 (config_5min.yaml)**
+- ema_length: 100, mom_lookback: 10, stop_atr_mult: 3.0
+- adx_threshold: 0.0 (비활성화)
+- timeframe: "5"
+
+### 백테스트 / 스윕 결과
+
+**ADX 필터 그룹별 분석 (1분봉, 2025-09-10~12-19, config: ema=100, look=5, stop=3.0)**
+
+| 구분 | 거래 | 승률 | 총손익 | PF | 평균손실 |
+|------|------|------|--------|-----|---------|
+| ADX < 20 (필터 차단 대상) | 427 | 50.4% | 23,342,500 | 1.98 | -111,946 |
+| ADX >= 20 (필터 통과) | 444 | 52.0% | 15,522,500 | 1.44 | -167,453 |
+
+→ ADX < 20 구간이 PF 1.98로 더 우수. ADX 필터 적용 시 오히려 수익성 저하.
+→ 이유: 저변동(ADX낮음)→ATR 작음→손절 타이트→손실폭 작음, 고변동(ADX높음)→ATR 큼→손절 넓음→손실폭 큼
+
+**결론: adx_threshold = 0.0 (비활성화) 확정**
+- 박스권 극단 케이스(2026-03-12, -7.7M)는 max_daily_loss 타이트 설정으로 대응
+- ADX 코드는 유지 (향후 다른 임계값 테스트 가능)
+
+### 오늘 거래 결과 요약
+- 오늘은 3월물 만기일. 실거래 없음 (봇 미실행).
+
+### 발견된 버그 / 수정사항
+
+1. **backtest/engine.py**: ADX 필터 추가 (adx_threshold 파라미터)
+2. **config.yaml / config_5min.yaml**: adx_threshold 20.0 → 0.0 (비활성화)
+3. **GitHub push 완료**: `5372c81` (ADX 구현 + 5분봉 프로그램 일괄 커밋)
+
+### 다음 세션 TODO
+
+- [ ] future_code 6월물로 교체 (A0163000 → 6월물 코드 확인 필요, 만기 지남)
+- [ ] max_daily_loss 10,000,000 → 500,000 복원 (현재 테스트용)
+- [ ] logging.level DEBUG → INFO 복원
+- [ ] config.yaml mom_lookback 5 → 3 변경 검토 (백테스트 1위 파라미터)
+- [ ] 5분봉 실거래 테스트 (main_5min.py)
+- [ ] 변경사항 GitHub push
+
+### 미해결 질문
+
+- 박스권 장세에서 브랜도 전략 손실 방지: ADX 필터 불가 → max_daily_loss 외 대안?
+- 5분봉 ADX 그룹 분석 미실행 (1분봉 결과와 동일 패턴 예상)
+
+---
+
 ## 2026-03-12 세션 노트
 
 ### 전략 파라미터 현황

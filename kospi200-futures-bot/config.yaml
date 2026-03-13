@@ -12,8 +12,8 @@ strategy:
     kc_mult: 1.5
   brando:
     ema_length: 100          # 추세 확인용 EMA (브랜도: 장기 추세)
-    mom_lookback: 5          # 모멘텀 돌파 기준 탐색 봉 수
-    adx_threshold: 20.0      # 박스권 필터: ADX < 이 값이면 신규 진입 차단 (0 = 비활성화)
+    mom_lookback: 3          # 모멘텀 돌파 기준 탐색 봉 수 (스윕 1위 최적값)
+    adx_threshold: 0.0       # 박스권 필터: ADX < 이 값이면 신규 진입 차단 (0 = 비활성화) ← 분석 결과 비활성화 권장
   timeframe: "1"             # 분봉 단위 (1분봉)
 
 risk:
